@@ -1,0 +1,641 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+# vi:ts=4 sw=4 et
+
+from gi.repository import Gtk
+from gi.repository import GLib
+
+from optparse import OptionParser
+from collections import namedtuple
+import os
+import sys
+import logging
+import gettext
+
+#from preferences import prefs
+#from settings import config
+
+_ = lambda msg: gettext.dgettext('batterymon', msg)
+logger = logging.getLogger("batterymon")
+
+
+# Desktop notifications init
+try:
+    import pynotify
+    if not pynotify.init("Battery Monitor"):
+        print(_("There was an error initializing the notification system. Notifications won't work."))
+        pynotify = None
+except:
+    print(_("You do not seem to have python-notify installed. Notifications won't work."))
+    pynotify = None
+
+
+VERSION="1.4.2"
+AUTHORS=["Matthew Horsell", "Tomas Kramar", "sayamindu", "Denilson Sá", "Jarek Sedlacek"]
+
+
+
+def cat(dirname, filename=None):
+    '''Works somewhat like the command-line "cat".
+    You pass a filename, and it returns the file contents.
+    You can also pass two strings and they will be joined using os.path.join().
+    The returned string is automatically stripped using .strip().
+
+    If the file is not found (or in case of IOError), just return an empty
+    string.
+
+    >>> cat('/file_not_found_or_IOError')
+    ''
+    >>> # These 3 function calls behave exactly the same way:
+    >>> cat('/proc/version')  # doctest:+ELLIPSIS
+    ...
+    >>> cat('/proc', 'version')  # doctest:+ELLIPSIS
+    ...
+    >>> cat('/proc/', 'version')  # doctest:+ELLIPSIS
+    ...
+
+    '''
+
+    fullfilename = dirname if filename is None else os.path.join(dirname, filename)
+    try:
+        with open(fullfilename) as f:
+            return f.read().strip()
+    except IOError as e:
+        return ''
+
+
+def int_or_zero(s):
+    '''Receives a string and converts to int.
+    Returns zero in case of errors, instead of throwing an exception.
+
+    >>> int_or_zero('')
+    0
+    >>> int_or_zero('42')
+    42
+    '''
+
+    try:
+        return int(s)
+    except ValueError as e:
+        return 0
+
+
+def detect_AcAdapters_and_Batteries():
+    '''Detects both AC Adapters and Batteries, using the "new"
+    /sys/class/power_supply/* interface.
+
+    Returns 2 lists, one of AcAdapter objects, and another of Battery objects.
+    '''
+
+    ac_adapters = []
+    batteries = []
+
+    basepath = '/sys/class/power_supply'
+    for name in os.listdir(basepath):
+        # dirname is '/sys/class/power_supply/BAT0'
+        dirname = os.path.join(basepath, name)
+
+        try:
+            devtype = cat(os.path.join(dirname, 'type'))
+
+            if devtype == 'Mains':
+                ac_adapters.append(AcAdapter(dirname))
+            elif devtype == 'Battery':
+                batteries.append(Battery(dirname))
+            else:
+                logger.debug('Unknown type "{0}" for {1}'.format(devtype, dirname))
+        except IOError as e:
+            # I'm not using logger.exception() because this is not an error.
+            logger.debug('Exception while detecting "{0}": {1}'.format(dirname, e))
+
+    logger.debug('Found {0} AC adapter(s) and {1} battery(ies)'.format(len(ac_adapters), len(batteries)))
+
+    return ac_adapters, batteries
+
+
+class AcAdapter:
+    def __init__(self, dirname):
+        self._dirname = dirname
+
+    def update(self):
+        # Possible values: 0, 1
+        present = (cat(self._dirname, 'online') == '1')
+        logger.debug("Adapter is present: %s" % present)
+        return present
+
+    def __eq__(self, _object):
+        if isinstance(_object, AcAdapter):
+            return self._dirname == _object._dirname
+        return False
+
+class Battery:
+    def __init__(self, dirname):
+        self._dirname = dirname
+
+    def __eq__(self, _object):
+        if isinstance(_object, Battery):
+            return self._dirname == _object._dirname
+        return False
+
+    def update(self):
+        # Working with /sys/class/power_supply/ battery interface:
+        #
+        # /present:
+        #   0 or 1
+        # /status:
+        #   "Unknown", "Charging", "Discharging", "Not charging", "Full"
+        #   state, then probably it will be reported as "Unknown".
+        #   All other states are pretty self-explanatory.
+        #   Similar to "charging state:" from /proc/acpi/battery/BAT0/state
+        # /power_now:
+        #   Power being supplied to or by the battery, measured in microwatts.
+        #   The same as "present rate:" from /proc/acpi/battery/BAT0/state
+        # /current_now:
+        #   Outdated interface, replaced by power_now.
+        # /energy_now:
+        #   Remaining energy stored in the battery, measured in microWh.
+        #   The same as "remaining capacity:" from /proc/acpi/battery/BAT0/state
+        # /energy_full_design:
+        #   Measured in microWh.
+        #   The same as "design capacity:" from /proc/acpi/battery/BAT0/info
+        # /energy_full:
+        #   This is the value that should be used when calculating the capacity.
+        #   Measured in microWh.
+        #   The same as "last full capacity:" from /proc/acpi/battery/BAT0/info
+        #
+        # http://lxr.linux.no/linux+*/Documentation/power/power_supply_class.txt
+        # http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=7faa144a518c456e2057918f030f50100144ccc6
+        # http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=532000
+
+        # Note: this value is not used anywhere else in the program.
+        present = (cat(self._dirname, 'present') == '1')
+        logger.debug("battery.present: %s" % str(present))
+
+        charging_status = cat(self._dirname, 'status')
+        if charging_status == 'Charging':
+            is_charging = True
+            is_discharging = False
+        elif charging_status == 'Discharging':
+            is_charging = False
+            is_discharging = True
+        else:
+            # "Unknown", "Not charging", "Full"
+            is_charging = False
+            is_discharging = False
+
+        logger.debug("battery.is_charging: %s" % str(is_charging))
+        logger.debug("battery.is_discharging: %s" % str(is_discharging))
+
+        # "(charge|energy)_full" should be preferred over
+        # "(energy|charge)_full_design"
+
+        # naming convention 1: charge_full, charge_now, current_now
+        # naming convention 2: energy_full, energy_now, power_now
+        energy_full = int_or_zero( \
+                cat(self._dirname, 'charge_full') or \
+                cat(self._dirname, 'energy_full') \
+        )
+
+        energy_now = int_or_zero( \
+                cat(self._dirname, 'charge_now') or \
+                cat(self._dirname, 'energy_now') \
+        )
+
+        power_now = int_or_zero( \
+                cat(self._dirname, 'current_now') or \
+                cat(self._dirname, 'power_now') \
+        )
+
+        if energy_full > 0:
+            charge_level = 100 * energy_now // energy_full
+        else:
+            charge_level = 0
+        logger.debug("battery.charge_level: %s" % str(charge_level))
+
+        return (energy_full, energy_now, power_now)
+
+
+BatteryInfo = namedtuple('BatteryInfo', 'charge_level remaining_time is_charging is_discharging present')
+
+
+class Theme:
+    local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icons')
+    system_path = '/usr/share/batterymon/icons'
+
+    def __init__(self, theme):
+        self.theme = theme
+        self.iconpath = self.__resolve_iconpath()
+
+        if not self.validate(theme):
+            logger.error("Theme %s does not exists, falling back to default" % theme)
+            self.theme = "default"
+
+            if not self.validate("default"):
+                logger.critical("Default theme does not exists, fatal")
+                exit()
+
+        logger.debug("Theme %s validated" % self.theme)
+
+    def __resolve_iconpath(self):
+        for path in [self.local_path, self.system_path]:
+            themedir = os.path.join(path, self.theme)
+            if os.path.isdir(themedir):
+                logger.debug('Using %s' % (themedir,))
+                return themedir
+
+    @classmethod
+    def list_all_themes(cls):
+        print ("Themes:")
+        temp = []
+        for path in [cls.local_path, cls.system_path]:
+            try:
+                temp.extend(os.listdir(path))
+            except OSError:
+                pass
+        temp.sort()
+        print (str(temp))
+
+    def get_icon(self, name):
+        return os.path.join(self.iconpath, "battery_%s.png" % (name,))
+
+    def file_exists(self, f):
+        try:
+            open(f)
+        except IOError:
+            return False
+        else:
+            return True
+
+    def validate(self, theme):
+        all_icons = ["1", "2", "3", "4", "5", "empty", "full",
+        "charging_1","charging_2","charging_3","charging_4","charging_5",
+        "charging_full","charging_empty"]
+
+        for icon in all_icons:
+            if not self.file_exists(self.get_icon(icon)):
+                logger.debug("Could not find icon %s" % self.get_icon(icon))
+                return False
+
+        return True
+
+
+class PowerEventListener:
+    def ac_property_modified(self, present):
+        pass
+
+    def battery_property_modified(self, battery_info):
+        pass
+
+
+class Systray(PowerEventListener):
+    def __init__(self, theme):
+        self.theme = theme
+        self.tray_object= Gtk.StatusIcon()
+        self.tray_object.set_visible(False)
+        #self.set_icon("full")
+        #self.tray_object.set_blinking(False)
+        self.tray_object.connect("popup_menu", self.rightclick_menu)
+
+        self.show_trayicon(1) ## fixed to one for now
+
+    def show_trayicon(self,value):
+       setting = value
+       ### only changing on startup
+
+       if setting == 3 : ## only show if charing or discharging
+            self.tray_object.set_visible(False)
+            return
+
+       if setting == 1: ### always show an icon
+                self.tray_object.set_visible(True)
+                return
+
+       if setting == 2: ## only show when discharging
+            self.tray_object.set_visible(True)
+
+            return
+
+    def read_settings(self):
+       settings=config()
+       result = settings.read_settings_int("show_icon")
+
+       return result
+
+    def battery_property_modified(self, battery):
+        # Setting the tooltip
+        if battery.is_charging:
+            self.tray_object.set_tooltip_text(
+                _("On AC (Charging)\nBattery Level: {battery.charge_level}%").format(battery=battery)
+                #_("On AC (Charging)\nBattery Level: {charge_level}%\nTime remaining: {remaining_time}").format(battery=battery)
+            )
+            logger.debug('Charging - charge_level={battery.charge_level}'.format(battery=battery))
+
+        elif battery.is_discharging:
+            self.tray_object.set_tooltip(
+                _("Battery Level: {battery.charge_level}%\nTime remaining: {battery.remaining_time}").format(battery=battery)
+            )
+            logger.debug('Discharging - charge_level={battery.charge_level} - time={battery.remaining_time}'.format(battery=battery))
+
+        else:
+            self.tray_object.set_tooltip(
+                _("On AC\nBattery Level: {battery.charge_level}%").format(battery=battery)
+            )
+            logger.debug('On AC - charge_level={battery.charge_level}'.format(battery=battery))
+
+        # Some helper variables
+        on_ac = battery.is_charging or (not battery.is_discharging)
+
+        levels_and_icons = [
+            (96, 'full'),
+            (80, '5'),
+            (64, '4'),
+            (48, '3'),
+            (32, '2'),
+            (16, '1'),
+            ( 0, 'empty'),
+        ]
+
+        # Setting the icon image
+        for level, icon_name in levels_and_icons:
+            if level > battery.charge_level:
+                continue
+            else:
+                # Found the most appropriate icon!
+                if on_ac:
+                    icon_name = 'charging_' + icon_name
+                self.set_icon(icon_name)
+
+                # Idea: use low_level and critical_level to decide if the icon should blink
+                #self.tray_object.set_blinking(False)
+
+                # Let's stop this for loop
+                break
+        else:
+            # No icon found. This shouldn't happen.
+            logger.debug('No icon found for charge_level="{0}", this should not have happened.'.format(battery.charge_level))
+
+    def rightclick_menu(self, button, widget, event):
+        menu = Gtk.Menu()
+        about_menu = Gtk.ImageMenuItem(Gtk.STOCK_ABOUT)
+        about_menu.connect('activate', self.about)
+        exit_menu = Gtk.ImageMenuItem(Gtk.STOCK_CLOSE)
+        exit_menu.connect('activate', self.close)
+        pref_menu = Gtk.ImageMenuItem(Gtk.STOCK_PREFERENCES)
+        pref_menu.connect('activate',self.preferences)
+        menu.append(about_menu)
+        #menu.append(pref_menu)
+        menu.append(exit_menu)
+        menu.show_all()
+        menu.popup(None, None, None, 2, event, 1)
+
+    def preferences(self,button):
+        show_prefs = prefs()
+
+    def close(self,button):
+        sys.exit(0)
+
+    def about(self, button):
+        about_dg = Gtk.AboutDialog()
+        about_dg.set_name(_("Battery Monitor"))
+        about_dg.set_version(VERSION)
+        about_dg.set_authors(AUTHORS)
+        about_dg.connect("response", lambda d, r: d.destroy())
+        about_dg.show()
+
+    def set_icon(self,name):
+        self.tray_object.set_from_file(self.theme.get_icon(name))
+        self.Icon_name = name
+        logger.debug("Icon Name: %s" % name)
+
+
+class NotificationHelper:
+    def __init__(self, theme):
+        self.theme = theme
+
+    def notify(self, title, message, icon):
+        if pynotify:
+            n = pynotify.Notification(title, message)
+            iconf = self.theme.get_icon(icon)
+            logger.debug("DEBUG Notification icon " +iconf)
+            icon = Gtk.gdk.pixbuf_new_from_file_at_size(iconf, 46, 46)
+            n.set_icon_from_pixbuf(icon)
+            n.show()
+            logger.debug("Notification shown")
+
+
+def parse_args():
+    parser = OptionParser(usage='usage: %prog [options] ', version=VERSION, description="Simple Battery Monitor")
+    parser.add_option("-n", "--notify-at"  , action="store", help="notify me when battery level is lower than the provided value", dest="notification_level", default="10")
+    parser.add_option("-c", "--critical"   , action="store", help="set critical level", dest="critical_level", default="5")
+    parser.add_option("-e", "--on-critical", action="store", help="run this command on critical power level", dest="critical_command", default=None)
+    parser.add_option("-i", "--interval"   , action="store", help="polling interval (in seconds)" , dest="polling_interval", default="10")
+    parser.add_option("-t", "--theme"      , action="store", help="set icon theme", dest="theme", default="default")
+    parser.add_option("-l", "--list-themes", action="store_true", help="list all avalable themes", dest="list_themes", default=False)
+    parser.add_option("-d", "--debug"      , action="store_true", help="run in debug mode" , dest="debug", default=False)
+    (options, args) = parser.parse_args()
+
+    return options
+
+
+class PowerManager:
+    def __init__(self):
+        self.listeners = []
+        self.adapters = self.batteries = []
+
+        # True = on line; False = off-line
+        self._ac_old_state = False
+
+        self.initialize_ac_ba()
+
+    def initialize_ac_ba(self):
+        new_adapters = []
+        new_batteries = []
+        adapters, batteries = detect_AcAdapters_and_Batteries()
+
+        for adapter in adapters:
+            if adapter in self.adapters:
+                for old_adapter in self.adapters:
+                    if adapter == old_adapter:
+                        new_adapters.append(old_adapter)
+                        break
+            else:
+                new_adapters.append(adapter)
+
+        for battery in batteries:
+            if battery in self.batteries:
+                for old_battery in self.batteries:
+                    if battery == old_battery:
+                        new_batteries.append(old_battery)
+                        break
+            else:
+                new_batteries.append(battery)
+
+        self.adapters = new_adapters
+        self.batteries = new_batteries
+
+        # Since this is being called on a GTK timer, it needs to return True
+        # (if it returns False, the timer stops)
+        return True
+
+    def __ac_property_modified_handler(self, present):
+        for listener in self.listeners:
+            listener.ac_property_modified(present)
+
+    def __battery_property_modified_handler(self, battery):
+        for listener in self.listeners:
+            listener.battery_property_modified(battery)
+
+    def __str_time(self, seconds):
+        if seconds <= 0:
+            return 'Unknown'
+
+        minutes = seconds // 60
+        hours = minutes // 60
+
+        minutes = minutes % 60
+
+        #FIXME: The strings below need to be i18n-ized properly
+        if hours == 0 and minutes == 0:
+            return "Less than a minute"
+        else:
+            return self.__format_time(hours, "Hour", "Hours") + " " + self.__format_time(minutes, "Minute", "Minutes")
+
+    def __format_time(self, time, singular, plural):
+        if time == 0:
+            return ""
+        elif time == 1:
+            return "1 %s" % singular
+        else:
+            return "%s %s" % (time, plural)
+
+    def update(self):
+        # reinitialize ac adapter and battery status in order to detect any
+        # new/removed devices
+        self.initialize_ac_ba()
+
+        state_adapter = False
+        state_adapters = []
+        for adapter in self.adapters:
+            state_adapters.append(adapter.update())
+        for state in state_adapters:
+            if state and not state_adapter:
+                state_adapter = state
+
+        if self._ac_old_state != state_adapter:
+            self.__ac_property_modified_handler(state_adapter)
+        self._ac_old_state = state_adapter
+
+        state_full = state_now = state_power = 0
+        for battery in self.batteries:
+            res = battery.update()
+            state_full += res[0]
+            state_now += res[1]
+            state_power += res[2]
+
+        charge_level = 0
+        if state_full > 0:
+            charge_level = 100 * state_now // state_full
+        logger.debug("Total battery.charge_level: %s" % str(charge_level))
+
+        remaining_seconds = -1
+        if state_now > 0:
+            if not state_power:
+                remaining_seconds = 0
+            elif state_adapter:
+                # Note: this is very inaccurate because the charging time is not linear
+                remaining_seconds = ((state_full - state_now) * 60 * 60) // state_power
+            else:
+                remaining_seconds = (state_now * 60 * 60) // state_power
+
+        logger.debug("battery.remaining_seconds: %s" % str(remaining_seconds))
+
+        if remaining_seconds:
+            remaining_time = self.__str_time(remaining_seconds)
+        else:
+            remaining_time = "Unable to get power information"
+
+        logger.debug("battery.remaining_time: %s" % str(remaining_time))
+
+        self.__battery_property_modified_handler(BatteryInfo(charge_level, remaining_time, state_adapter == True, state_adapter == False, len(self.batteries) > 0))
+
+        # Since this is being called on a GTK timer, it needs to return True
+        # (if it returns False, the timer stops)
+        return True
+
+
+class Notificator(PowerEventListener):
+    def __init__(self, theme, low_level=-1, critical_level=-1):
+        self.n = NotificationHelper(theme)
+        self.low_level = low_level
+        self.notified = False
+        self.critical_level = critical_level
+        self.critically_notified = False
+        logger.debug("self.low_level " + str(self.low_level))
+
+    def ac_property_modified(self, present):
+        # TODO: use the appropriate icon, instead of just the "full" versions
+        if present:
+            self.n.notify(_("On AC"), _("You are currently running on AC"),"charging_full")
+        else:
+            self.n.notify(_("On Battery"), _("AC adapter unplugged, running on battery"),"full")
+
+    def battery_property_modified(self, battery):
+        # TODO: use the appropriate icon, instead of just the "full" versions
+        if battery.charge_level <= self.low_level and not self.notified:
+            self.n.notify(_("Low Battery"), _("You have approximately <b>%s</b> remaining") % battery.remaining_time,"empty")
+            self.notified = True
+
+        if battery.charge_level <= self.critical_level and not self.critically_notified:
+            self.n.notify(_("Critical Battery"), _("You have approximately <b>%s</b> remaining") % battery.remaining_time,"empty")
+            self.critically_notified = True
+
+
+        if battery.is_charging and battery.charge_level > self.critical_level:
+            self.critically_notified = False
+
+        if battery.is_charging and battery.charge_level > self.low_level:
+            self.notify = False
+
+
+class CommandRunner(PowerEventListener):
+    def __init__(self, power_level, command):
+        self.power_level = power_level
+        self.command = command
+
+    def battery_property_modified(self, battery):
+        if int(battery.charge_level) <= int(self.power_level) and self.command and not battery.is_charging:
+            logger.debug("Running command '%s'" % self.command)
+            os.system(self.command)
+
+
+def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s %(filename)s[%(lineno)d]: %(levelname)s %(message)s')
+
+    cmdline = parse_args()
+
+    if cmdline.list_themes:
+        Theme.list_all_themes()
+        sys.exit(1)
+    if cmdline.debug:
+        logger.setLevel(logging.DEBUG)
+
+    theme = Theme(cmdline.theme)
+
+    systray = Systray(theme)
+    notificator = Notificator(theme, int(cmdline.notification_level), int(cmdline.critical_level))
+    executor = CommandRunner(int(cmdline.critical_level), cmdline.critical_command)
+
+    pm = PowerManager()
+    pm.listeners.append(notificator)
+    pm.listeners.append(systray)
+    pm.listeners.append(executor)
+
+    pm.update()
+    GLib.timeout_add_seconds(int(cmdline.polling_interval), pm.update)
+
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()
