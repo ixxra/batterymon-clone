@@ -332,7 +332,7 @@ class Systray(PowerEventListener):
             logger.debug('Charging - charge_level={battery.charge_level}'.format(battery=battery))
 
         elif battery.is_discharging:
-            self.tray_object.set_tooltip(
+            self.tray_object.set_tooltip_text(
                 _("Battery Level: {battery.charge_level}%\nTime remaining: {battery.remaining_time}").format(battery=battery)
             )
             logger.debug('Discharging - charge_level={battery.charge_level} - time={battery.remaining_time}'.format(battery=battery))
