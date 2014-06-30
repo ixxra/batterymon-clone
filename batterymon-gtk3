@@ -13,6 +13,10 @@ import sys
 import logging
 import gettext
 
+
+class IconsNotInPathError(Exception):
+    pass
+
 #from preferences import prefs
 #from settings import config
 
@@ -226,6 +230,10 @@ class Theme:
     def __init__(self, theme):
         self.theme = theme
         self.iconpath = self.__resolve_iconpath()
+      
+        if self.iconpath is None:
+            raise IconsNotInPathError('Adjust XDG_DATA_DIRS in case you customized your installation prefix')
+
 
         if not self.validate(theme):
             logger.error("Theme %s does not exists, falling back to default" % theme)
@@ -237,12 +245,25 @@ class Theme:
 
         logger.debug("Theme %s validated" % self.theme)
 
+
+    def __get_xdg_iconpath(self):
+        try:
+            from xdg.BaseDirectory import xdg_data_dirs
+            xdg_path = [os.path.join(d, 'batterymon/icons') for d in xdg_data_dirs]
+        except:
+            logger.error('python-xdg not installed, custom theme install wont work')
+            xdg_path = []
+
+        return xdg_path
+
+
     def __resolve_iconpath(self):
-        for path in [self.local_path, self.system_path]:
+        for path in [self.local_path, self.system_path] + self.__get_xdg_iconpath():
             themedir = os.path.join(path, self.theme)
             if os.path.isdir(themedir):
                 logger.debug('Using %s' % (themedir,))
                 return themedir
+
 
     @classmethod
     def list_all_themes(cls):
@@ -609,6 +630,21 @@ class CommandRunner(PowerEventListener):
             os.system(self.command)
 
 
+def show_error_message_and_exit(title, msg):
+    dialog = Gtk.MessageDialog(
+                None,
+                Gtk.DialogFlags.DESTROY_WITH_PARENT,
+                Gtk.MessageType.ERROR,
+                Gtk.ButtonsType.CLOSE,
+                title
+            )
+
+    dialog.format_secondary_text(msg)
+
+    dialog.run()
+    exit(1)
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -622,7 +658,14 @@ def main():
     if cmdline.debug:
         logger.setLevel(logging.DEBUG)
 
-    theme = Theme(cmdline.theme)
+    try:
+        theme = Theme(cmdline.theme)
+
+    except IconsNotInPathError as error:
+        msg = ''.join(error.args)
+        logger.error('Icon Path: {}'.format(msg))
+        show_error_message_and_exit('Battery Monitor: Icon path error', msg)
+
 
     systray = Systray(theme)
     notificator = Notificator(theme, int(cmdline.notification_level), int(cmdline.critical_level))
