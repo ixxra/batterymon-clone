@@ -4,6 +4,7 @@
 
 from gi.repository import Gtk
 from gi.repository import GLib
+from gi.repository import GdkPixbuf
 
 from optparse import OptionParser
 from collections import namedtuple
@@ -21,13 +22,13 @@ logger = logging.getLogger("batterymon")
 
 # Desktop notifications init
 try:
-    import pynotify
-    if not pynotify.init("Battery Monitor"):
+    from gi.repository import Notify
+    if not Notify.init("Battery Monitor"):
         print(_("There was an error initializing the notification system. Notifications won't work."))
-        pynotify = None
+        Notify = None
 except:
     print(_("You do not seem to have python-notify installed. Notifications won't work."))
-    pynotify = None
+    Notify = None
 
 
 VERSION="1.4.2"
@@ -413,11 +414,11 @@ class NotificationHelper:
         self.theme = theme
 
     def notify(self, title, message, icon):
-        if pynotify:
-            n = pynotify.Notification(title, message)
+        if Notify:
+            n = Notify.Notification.new(title, message)
             iconf = self.theme.get_icon(icon)
             logger.debug("DEBUG Notification icon " +iconf)
-            icon = Gtk.gdk.pixbuf_new_from_file_at_size(iconf, 46, 46)
+            icon = GdkPixbuf.Pixbuf.new_from_file_at_size(iconf, 46, 46)
             n.set_icon_from_pixbuf(icon)
             n.show()
             logger.debug("Notification shown")
