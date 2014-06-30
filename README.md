@@ -1,5 +1,16 @@
 # batterymon-clone
 
+## Summary - Gtk3
+
+This is a fork of **batterymon-clone**, a clone of the clone?. Master branch is identical to the source at [https://github.com/JarekSed/batterymon-clone](https://github.com/JarekSed/batterymon-clone).
+
+The Gtk3 branch contains a new clone, *batterymon-gtk3*, which uses *Gtk3* with *gobject instrospection* and python3. 
+
+This is a work in progress, feel free to fork it.
+
+The original **README** follows:
+
+
 ## Summary
 
 **batterymon-clone** is a simple battery monitor tray icon for Linux.
