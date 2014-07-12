@@ -316,6 +316,7 @@ class Systray(PowerEventListener):
         self.tray_object.set_visible(False)
         #self.set_icon("full")
         #self.tray_object.set_blinking(False)
+        self.menu = None
         self.tray_object.connect("popup_menu", self.rightclick_menu)
 
         self.show_trayicon(1) ## fixed to one for now
@@ -396,19 +397,29 @@ class Systray(PowerEventListener):
             # No icon found. This shouldn't happen.
             logger.debug('No icon found for charge_level="{0}", this should not have happened.'.format(battery.charge_level))
 
-    def rightclick_menu(self, button, widget, event):
-        menu = Gtk.Menu()
-        about_menu = Gtk.ImageMenuItem(Gtk.STOCK_ABOUT)
+
+    def _build_menu(self):
+        self.menu = Gtk.Menu()
+        about_menu = Gtk.MenuItem('about')
+        exit_menu = Gtk.MenuItem('close')
+        #about_menu = Gtk.ImageMenuItem(Gtk.STOCK_ABOUT)
         about_menu.connect('activate', self.about)
-        exit_menu = Gtk.ImageMenuItem(Gtk.STOCK_CLOSE)
+        #exit_menu = Gtk.ImageMenuItem(Gtk.STOCK_CLOSE)
         exit_menu.connect('activate', self.close)
-        pref_menu = Gtk.ImageMenuItem(Gtk.STOCK_PREFERENCES)
-        pref_menu.connect('activate',self.preferences)
-        menu.append(about_menu)
+        #pref_menu = Gtk.ImageMenuItem(Gtk.STOCK_PREFERENCES)
+        #pref_menu.connect('activate',self.preferences)
+        self.menu.append(about_menu)
         #menu.append(pref_menu)
-        menu.append(exit_menu)
-        menu.show_all()
-        menu.popup(None, None, None, 2, event, 1)
+        self.menu.append(exit_menu)
+
+
+    def rightclick_menu(self, status_icon, button, activate_time):
+        if self.menu is None:
+            self._build_menu()
+        
+        self.menu.show_all()
+        self.menu.popup(None, None, None, None, button, activate_time)
+
 
     def preferences(self,button):
         show_prefs = prefs()
