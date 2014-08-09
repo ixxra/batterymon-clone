@@ -1,11 +1,12 @@
-#!/usr/bin/python
+#!/usr/bin/python2
 # -*- coding: utf-8 -*-
 # vi:ts=4 sw=4 et
 
-from gi.repository import Gtk
-from gi.repository import GLib
-from gi.repository import GdkPixbuf
+from __future__ import (print_function)
+from notagir import Gtk, GLib, Notify, GdkPixbuf
 
+#import gtk as Gtk
+#import glib as GLib
 from optparse import OptionParser
 from collections import namedtuple
 import os
@@ -24,15 +25,12 @@ _ = lambda msg: gettext.dgettext('batterymon', msg)
 logger = logging.getLogger("batterymon")
 
 
-# Desktop notifications init
-try:
-    from gi.repository import Notify
+if Notify is None:
+    print(_("You do not seem to have python-notify installed. Notifications won't work."))
+else:
     if not Notify.init("Battery Monitor"):
         print(_("There was an error initializing the notification system. Notifications won't work."))
         Notify = None
-except:
-    print(_("You do not seem to have python-notify installed. Notifications won't work."))
-    Notify = None
 
 
 VERSION="1.4.2"
@@ -315,7 +313,7 @@ class Systray(PowerEventListener):
         self.tray_object= Gtk.StatusIcon()
         self.tray_object.set_visible(False)
         #self.set_icon("full")
-        #self.tray_object.set_blinking(False)
+        #self.tray_object.set_blinking(False)#This is False by default
         self.menu = None
         self.tray_object.connect("popup_menu", self.rightclick_menu)
 
@@ -400,11 +398,11 @@ class Systray(PowerEventListener):
 
     def _build_menu(self):
         self.menu = Gtk.Menu()
-        about_menu = Gtk.MenuItem('about')
-        exit_menu = Gtk.MenuItem('close')
-        #about_menu = Gtk.ImageMenuItem(Gtk.STOCK_ABOUT)
+        #about_menu = Gtk.MenuItem('about')
+        #exit_menu = Gtk.MenuItem('close')
+        about_menu = Gtk.ImageMenuItem(Gtk.STOCK_ABOUT)
         about_menu.connect('activate', self.about)
-        #exit_menu = Gtk.ImageMenuItem(Gtk.STOCK_CLOSE)
+        exit_menu = Gtk.ImageMenuItem(Gtk.STOCK_CLOSE)
         exit_menu.connect('activate', self.close)
         #pref_menu = Gtk.ImageMenuItem(Gtk.STOCK_PREFERENCES)
         #pref_menu.connect('activate',self.preferences)
