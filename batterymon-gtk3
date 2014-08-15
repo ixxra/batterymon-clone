@@ -400,11 +400,13 @@ class Systray(PowerEventListener):
 
     def _build_menu(self):
         self.menu = Gtk.Menu()
-        about_menu = Gtk.MenuItem('about')
-        exit_menu = Gtk.MenuItem('close')
-        #about_menu = Gtk.ImageMenuItem(Gtk.STOCK_ABOUT)
+        #about_menu = Gtk.MenuItem('about')
+        #exit_menu = Gtk.MenuItem('close')
+        about_menu = Gtk.ImageMenuItem.new_from_stock('help-about')
+        about_menu.set_use_stock(True)
+        about_menu.set_always_show_image(True)
         about_menu.connect('activate', self.about)
-        #exit_menu = Gtk.ImageMenuItem(Gtk.STOCK_CLOSE)
+        exit_menu = Gtk.ImageMenuItem.new_from_stock('window-close')
         exit_menu.connect('activate', self.close)
         #pref_menu = Gtk.ImageMenuItem(Gtk.STOCK_PREFERENCES)
         #pref_menu.connect('activate',self.preferences)
